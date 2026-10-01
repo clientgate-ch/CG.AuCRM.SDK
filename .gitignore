@@ -1,0 +1,134 @@
+# ──────────────────────────────────────────────
+# Visual Studio 2022 / .NET 4.8 Framework
+# ──────────────────────────────────────────────
+
+# Build artifacts
+\*.suo
+\.vs/
+build/
+obj/
+bin/
+**/*.scc
+!build/*.vcxproj
+!obj/*
+
+# NuGet / Package Manager (legacy framework)
+packages-lock.json
+packages/
+lib\.nuget\*\*\.*
+bin\*.dll
+bin\*.*.pdb
+lib\*\*\.*
+
+# MSBuild
+bin\*.log
+**/MSBuildLogs.log
+!**/MSBuildLogs.log*
+
+# Test results (SpecFlow / xUnit / NUnit)
+TestResults.xml
+vstestresult.xml
+**/TestResults.xml
+**/vstestresult.xml
+!bin\*\*\.*.xsl
+!obj\*\*\.*.xsl
+
+# ──────────────────────────────────────────────
+# C# Specific
+# ──────────────────────────────────────────────
+\.vscode\*.json
+!.vscode/settings.json
+**/*.swo
+**/debug/
+**/bin/
+**/obj/
+
+# .NET SDK / runtime (vscode-managed)
+.vscode/.dotnet/
+!./.dotnet/**
+
+# ──────────────────────────────────────────────
+# TypeScript / JavaScript
+# ──────────────────────────────────────────────
+
+# Node.js dependencies
+node_modules/
+
+# Lock files
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+npm-debug.log*
+.yarnrc*
+.npmrc
+
+# Build output
+dist/
+build/
+out/
+
+# Source maps (large files)
+**/*.map
+!devtools/**/*.{map,js}
+!./node_modules/.vscode/**
+
+# ──────────────────────────────────────────────
+# Jest / JavaScript Tests
+# ──────────────────────────────────────────────
+
+# Coverage directory
+coverage/
+.nyc_output/
+
+# Jest configuration files
+jest-reporter-config.json
+jest.config.js
+jest.setup.js
+jest.setup.ts
+
+# Test output artifacts (generated, not source)
+!./node_modules/.vscode/**
+
+# ──────────────────────────────────────────────
+# SpecFlow / BDD (C# XAML testing)
+# ──────────────────────────────────────────────
+
+# Feature files — KEEP these (they are source)
+features/
+!features/**/*.specflow
+!features/**/*.{xaml,specflow}
+!features/**/*.specflow
+!features/**/*.specflow.xaml
+
+# SpecFlow output artifacts (generated)
+test-results/
+specflow-results/
+**/*.specflow.xml
+!src/test/*.specflow
+!src/test/*.specflow.xml
+
+# ──────────────────────────────────────────────
+# Cross-Project / Monorepo Artifacts
+# ──────────────────────────────────────────────
+\.vscode/**
+!.vscode/settings.json
+.code-coverage/
+.coverage/
+.idea/
+!.gitkeep
+
+# ──────────────────────────────────────────────
+# OS & Editor Artifacts
+# ──────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+!.gitkeep
+
+# ──────────────────────────────────────────────
+# Docker / Container (if applicable)
+# ──────────────────────────────────────────────
+docker-compose.yaml
+!docker-compose.override.yml
+!docker-compose.local.yml
