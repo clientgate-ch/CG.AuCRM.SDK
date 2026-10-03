@@ -1,0 +1,31 @@
+{
+  "name": "aiSDK",
+  "module": "aisdk.ts",
+  "type": "module",
+  "scripts": {
+    "test": "bunx jest --config=tests/spec/jest.config.json",
+    "build": "bunx webpack"
+  },
+  "devDependencies": {
+    "@jest/globals": "^30.5.2",
+    "@types/bun": "latest",
+    "@types/jest": "^30.0.0",
+    "@types/jquery": "^4.0.1",
+    "@types/node": "^26.6.4",
+    "@types/signalr": "^2.4.3",
+    "jest": "^30.5.2",
+    "jest-ts-auto-mock": "^2.1.0",
+    "ts-auto-mock": "^3.7.4",
+    "ts-jest": "^29.4.14",
+    "ts-loader": "^9.6.2",
+    "ttypescript": "^1.5.15",
+    "webpack": "^5.111.1",
+    "webpack-cli": "^7.2.3"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "dotenv": "^18.0.5"
+  }
+}
