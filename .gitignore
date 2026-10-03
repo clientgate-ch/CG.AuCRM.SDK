@@ -54,6 +54,9 @@ vstestresult.xml
 # Node.js dependencies
 node_modules/
 
+# Bun / package manager artifacts
+*.tgz
+
 # Lock files
 package-lock.json
 yarn.lock
@@ -71,6 +74,25 @@ out/
 **/*.map
 !devtools/**/*.{map,js}
 !./node_modules/.vscode/**
+
+# bun install / environment files
+.env
+.env.*
+!.env.example
+!.env.sample
+
+# logs / cache
+logs/
+_.log
+report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
+.eslintcache
+.cache
+*.tsbuildinfo
+
+# coverage
+coverage/
+*.lcov
+.nyc_output/
 
 # ──────────────────────────────────────────────
 # Jest / JavaScript Tests

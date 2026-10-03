@@ -1,0 +1,26 @@
+{
+	"dependsOn": [
+		"base",
+		"crm"
+	],
+	"types": {
+		"$login.pre": {
+			"scripts": [
+				
+			]
+		},
+		"$login": {
+			"types": [
+				"crm:Widget",
+				"crm:FieldWidgetFactory",
+				"CG"
+			]
+		},
+		
+		"CG": {
+			"scripts": [
+				"CG/cg.js"
+			]
+		}
+	}
+}
