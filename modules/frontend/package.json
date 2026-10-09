@@ -3,7 +3,7 @@
   "module": "cg.ts",
   "type": "module",
   "scripts": {
-    "test": "bunx jest --config=tests/spec/jest.config.json",
+    "test": "bunx jest",
     "build": "bunx webpack"
   },
   "devDependencies": {

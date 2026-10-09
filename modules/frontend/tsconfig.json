@@ -6,11 +6,10 @@
 		"strictNullChecks": false,
 		"allowSyntheticDefaultImports": true,
 		"esModuleInterop": true,
-		"module": "node16",
+		"module": "commonjs",
 		"resolveJsonModule": true,
 		"target": "es2019",
 		"allowJs": true,
-		"moduleResolution": "node16",
 		"sourceMap": true,
 		"lib": [
 			"DOM",
