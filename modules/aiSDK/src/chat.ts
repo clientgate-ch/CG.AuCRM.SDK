@@ -1,4 +1,7 @@
 import { read, readLink } from '../../frontend/src/extensions/Crud';
+import { QueryExecutor } from '../../frontend/src/extensions/QueryExecutor';
+import { QueryParser } from '../../frontend/src/extensions/QueryParser';
+import type { EntityQueryRequest } from '../../frontend/src/types/EntityQuery';
 
 const addToTargetGroup = (...args: any[]) => (globalThis as any).LGT.CRMExtensions.addToTargetGroup(...args);
 const executeBatch = (...args: any[]) => (globalThis as any).LGT.CRMExtensions.executeBatch(...args);
@@ -65,13 +68,43 @@ const coerceRecordList = (value: any): any[] => {
 };
 
 // Convert CRM property type codes to JSON Schema types
-const convertCrmTypeToJsonSchema = (crmTypeCode: string): string => {
-  // CRM type codes:
-  // 0 = string
-  // 1 = number/integer
-  // 2 = boolean
-  // 3 = date
-  const codeStr = String(crmTypeCode).trim();
+// Key-based type inference: certain property keys always have specific JSON Schema types
+const inferTypeByKey = (propertyKey: string): string | null => {
+  const key = String(propertyKey).toLowerCase();
+  
+  // Object types: complex data structures
+  if (["uid", "recorduid", "request", "link", "targetuid", "source", "elevent", "additionalparameters", "businessobject", "options"].includes(key)) {
+    return "object";
+  }
+  
+  // Array types: collections
+  if (["uids", "records", "fields", "links", "items"].includes(key)) {
+    return "array";
+  }
+  
+  // Explicitly numeric
+  if (["maxrows", "maxresults", "count", "limit"].includes(key)) {
+    return "number";
+  }
+  
+  return null;
+};
+
+const convertCrmTypeToJsonSchema = (propertyKey: string, crmTypeCode: string): string => {
+  // First try key-based inference for known complex types
+  const inferredType = inferTypeByKey(propertyKey);
+  if (inferredType) {
+    return inferredType;
+  }
+  
+  // Handle semantic type names from PropertyType field (pass-through)
+  const codeStr = String(crmTypeCode).trim().toLowerCase();
+  if (["string", "number", "object", "array", "boolean"].includes(codeStr)) {
+    return codeStr;
+  }
+  
+  // Fall back to CRM numeric code mapping for generic types
+  // 0=string, 1=number/integer, 2=boolean, 3=date
   switch (codeStr) {
     case "1":
       return "number";
@@ -93,8 +126,8 @@ export class PropertySchema {
     crmType: string,
     public description: string,
   ) {
-    // Convert CRM type code to JSON Schema type
-    this.jsonSchemaType = convertCrmTypeToJsonSchema(crmType);
+    // Convert CRM type code to JSON Schema type, using key-based inference
+    this.jsonSchemaType = convertCrmTypeToJsonSchema(this.key, crmType);
   }
 
   toJsonSchema(): Record<string, any> {
@@ -227,154 +260,324 @@ export const mapCapabilityRecordToToolSchema = (capabilityRecord: any, propertyR
   return new ToolSchema(String(capabilityId).trim(), String(capabilityDescription).trim(), mappedProperties);
 };
 
+/**
+ * AgentEntity - Encapsulates agent capability querying using fluent QueryBuilder API
+ * Queries C079 (Agent Capability) with child C081 (Property) records for a specific agent
+ */
+class AgentEntity {
+  constructor(private agentUid: RecordUid) {}
 
-export const readToolCapability = async (): Promise<{ capabilityRecord: any; parameterRecords: any[]; propertyRecords: any[] } | null> => {
-  try {
-    // Use readLink to directly navigate from C078 Agent to C079 Agent Capability
-    // through C082 association using proper link names
-    const linkedAssociationResponse = await readLink({
-      uid: migratedAgentUid,
-      linkName: "$Link[C082]",
-    });
+  /**
+   * Load all capabilities and their properties for the agent
+   * @returns Array of capabilities with capabilityRecord and propertyRecords
+   */
+  async loadCapabilities(): Promise<
+    Array<{ capabilityRecord: any; parameterRecords: any[]; propertyRecords: any[] }>
+  > {
+    try {
+      console.log("AgentEntity.loadCapabilities: Starting for agent", JSON.stringify(this.agentUid));
 
-    if (!linkedAssociationResponse) {
-      console.warn("No association found via $Link[C082]");
-      return null;
-    }
+      // Build query request using fluent QueryBuilder API
+      const queryRequest = this.buildQueryRequest();
 
-    const associationBusinessObject = firstRecordFromResponse(linkedAssociationResponse) as u8.Crm.BusinessObject;
-    
-    if (!associationBusinessObject?.uid) {
-      console.warn("Could not extract association UID from linked response");
-      return null;
-    }
+      console.log("AgentEntity.loadCapabilities: Built query request with UQL:", queryRequest.statement);
 
-    // Now navigate from C082 association to C079 capability
-    const linkedCapabilityResponse = await readLink({
-      uid: associationBusinessObject.uid,
-      linkName: "$Link[C079]",
-    });
-
-    if (!linkedCapabilityResponse) {
-      console.warn("No capability found via $Link[C079]");
-      return null;
-    }
-
-    const linkedCapabilityBusinessObject = firstRecordFromResponse(linkedCapabilityResponse) as u8.Crm.BusinessObject;
-    
-    if (!linkedCapabilityBusinessObject?.uid) {
-      console.warn("Could not extract capability UID from linked response");
-      return null;
-    }
-
-    console.log("Resolved capability UID:", linkedCapabilityBusinessObject.uid);
-
-    // Read the full capability record (C079) with all required fields: ID, DisplayName, Description
-    const fullCapabilityRecordResponse = await read({
-      uid: linkedCapabilityBusinessObject.uid,
-      fields: ["ID", "DisplayName", "Description", "ToolType", "ToolImplementation", "CapabilityType"],
-    } as any);
-
-    console.log("=== CAPABILITY RECORD READ RESPONSE ===");
-    console.log("fullCapabilityRecordResponse:", JSON.stringify(fullCapabilityRecordResponse, null, 2));
-    console.log("firstRecordFromResponse result:", JSON.stringify(firstRecordFromResponse(fullCapabilityRecordResponse), null, 2));
-    console.log("=====================================");
-
-    const capabilityRecord = fullCapabilityRecordResponse;
-
-    // Read the parameter records (C080) linked to the capability
-    // Use readLink() to get C080 UIDs, then read() to fetch their field values
-    const parameterLinkResponse = await readLink({
-      uid: linkedCapabilityBusinessObject.uid,
-      linkName: "$Link[C080]",
-    } as any);
-
-    console.log("=== PARAMETER RECORDS READ RESPONSE (from readLink) ===");
-    console.log("parameterLinkResponse:", JSON.stringify(parameterLinkResponse, null, 2));
-    console.log("====================================================");
-
-    const linkedParameterRecords = coerceRecordList(parameterLinkResponse);
-    console.log("Linked parameter records count:", linkedParameterRecords.length);
-
-    // C080 is a navigation bridge to C081 - store UIDs without reading C080 fields
-    const parameterRecords: any[] = [];
-    for (let i = 0; i < linkedParameterRecords.length; i++) {
-      const linkedParam = firstRecordFromResponse(linkedParameterRecords[i]) as u8.Crm.BusinessObject;
-      if (!linkedParam?.uid) {
-        console.warn(`Parameter record ${i} from readLink has no uid`);
-        continue;
-      }
-
-      // Store the parameter record UID for navigation to C081
-      parameterRecords.push(linkedParam);
-    }
-
-    console.log("Parameter records with fields count:", parameterRecords.length);
-
-    const propertyRecords: any[] = [];
-
-    for (let i = 0; i < parameterRecords.length; i++) {
-      const parameterBusinessObject = parameterRecords[i] as u8.Crm.BusinessObject;
-      
-      if (!parameterBusinessObject || !parameterBusinessObject.uid) {
-        console.warn(`Parameter record ${i} has no valid uid`);
-        continue;
-      }
-
-      try {
-        // Read C081 properties linked to the parameter via $Link[C081]
-        // Use readLink() to get C081 UIDs, then read() to fetch their field values
-        const propertyLinkResponse = await readLink({
-          uid: parameterBusinessObject.uid,
-          linkName: "$Link[C081]",
-        });
-
-        console.log(`=== PROPERTY LINK RESPONSE FOR PARAMETER ${i} (from readLink) ===`);
-        console.log("propertyLinkResponse:", JSON.stringify(propertyLinkResponse, null, 2));
-        console.log("===============================================================");
-
-        const linkedPropertyRecords = coerceRecordList(propertyLinkResponse);
-        
-        // Now fetch the actual field values for each property record
-        for (let j = 0; j < linkedPropertyRecords.length; j++) {
-          const linkedProperty = firstRecordFromResponse(linkedPropertyRecords[j]) as u8.Crm.BusinessObject;
-          if (!linkedProperty?.uid) {
-            console.warn(`Property record ${i}.${j} from readLink has no uid`);
-            continue;
-          }
-
-          try {
-            // Read the property record to get its field values
-            const propertyFieldResponse = await read({
-              uid: linkedProperty.uid,
-              fields: ["PropertyKey", "PropertyType", "PropertyDescription"],
+      // Execute query using QueryExecutor with EntityQueryResponse grouping
+      const queryResponse = await QueryExecutor.executeEntityQuery(
+        queryRequest,
+        (queryCommand: any) => {
+          const cmd = new u8.Crm.QueryCommand({
+            statement: queryCommand.statement,
+            link: queryCommand.link,
+          } as any);
+          
+          return executeQuery(cmd).then((result: any) => {
+            // Log raw result structure for debugging
+            console.log("AgentEntity query raw result:", {
+              type: result?.constructor?.name,
+              keys: Object.keys(result || {}),
+              hasRows: !!result?.rows,
+              hasResultSet: !!result?.resultSet,
+              hasResult: !!result?.result,
             });
 
-            console.log(`=== PROPERTY FIELDS FOR PARAMETER ${i}, PROPERTY ${j} ===`);
-            console.log("propertyFieldResponse:", JSON.stringify(propertyFieldResponse, null, 2));
-            console.log("=======================================================");
+            // Handle various CRM result formats
+            if (result?.resultSet) {
+              // CRM may wrap rows in resultSet
+              return result.resultSet;
+            }
+            return result;
+          });
+        },
+        { link: this.agentUid }
+      );
 
-            propertyRecords.push(propertyFieldResponse);
-          } catch (fieldError) {
-            console.warn(`Failed to read fields for property record ${i}.${j}:`, fieldError);
-            continue;
-          }
+      console.log("AgentEntity.loadCapabilities: Query executed, received", queryResponse.totalCount, "total rows");
+
+      // Parse capabilities from grouped response
+      const capabilities = this.parseCapabilities(queryResponse);
+
+      console.log("AgentEntity.loadCapabilities: Parsed", capabilities.length, "capabilities");
+
+      return capabilities;
+    } catch (error) {
+      console.error("AgentEntity.loadCapabilities: Failed to load capabilities", error);
+      return [];
+    }
+  }
+
+  /**
+   * Build EntityQueryRequest with manual UQL construction
+   * Selects C079 (capability) fields and joins with C081 (property) records
+   * Note: Qualified joins (C079.C080) require manual UQL, not QueryBuilder
+   */
+  private buildQueryRequest(): EntityQueryRequest {
+    // Manually construct UQL with qualified joins (C079.C080, C080.C081)
+    const uqlQuery = `
+      select (C079.CapabilityType, C079.Description, C079.DisplayName, C079.ID, C079.ToolType, C079.ToolImplementation, C081.PropertyKey, C081.PropertyType, C081.PropertyDescription)
+      from (C082)
+      with (C079)
+      with (C079.C080 using link 300)
+      with (C080.C081 using link 300)
+    `;
+
+    // Return EntityQueryRequest with grouping by capability ID
+    return {
+      statement: uqlQuery,
+      link: null,
+      groupByKey: "C079.ID",
+      joins: [
+        { entity: "C079", linkNum: null, fields: [] },
+        { entity: "C080", linkNum: 300, fields: [] },
+        { entity: "C081", linkNum: 300, fields: ["C081.PropertyKey", "C081.PropertyType", "C081.PropertyDescription"] },
+      ],
+      selectedFields: [
+        "C079.CapabilityType",
+        "C079.Description",
+        "C079.DisplayName",
+        "C079.ID",
+        "C079.ToolType",
+        "C079.ToolImplementation",
+        "C081.PropertyKey",
+        "C081.PropertyType",
+        "C081.PropertyDescription",
+      ],
+    };
+  }
+
+  /**
+   * Transform EntityQueryResponse into capability records with .get() accessors
+   * Converts grouped EntityHierarchy format to flat array matching readToolCapability output
+   */
+  private parseCapabilities(
+    queryResponse: any
+  ): Array<{ capabilityRecord: any; parameterRecords: any[]; propertyRecords: any[] }> {
+    const capabilities: Array<{
+      capabilityRecord: any;
+      parameterRecords: any[];
+      propertyRecords: any[];
+    }> = [];
+
+    // DEBUG: Log actual structure received
+    console.log("AgentEntity.parseCapabilities: Received input:", {
+      constructorName: queryResponse?.constructor?.name,
+      allKeys: Object.keys(queryResponse || {}),
+      rowsType: Array.isArray(queryResponse?.rows) ? "array" : typeof queryResponse?.rows,
+      rowsLength: queryResponse?.rows?.length,
+      entitiesType: queryResponse?.entities?.constructor?.name,
+      entitiesSizeOrLength: queryResponse?.entities?.size || queryResponse?.entities?.length,
+      totalCount: queryResponse?.totalCount,
+      firstFewProps: JSON.stringify(queryResponse, null, 2).substring(0, 500),
+    });
+
+    // If queryResponse has raw rows but no grouped entities, parse them directly
+    if (Array.isArray(queryResponse?.rows) && queryResponse.rows.length > 0) {
+      console.log("AgentEntity.parseCapabilities: Processing raw rows directly", {
+        rowCount: queryResponse.rows.length,
+        firstRowKeys: Object.keys(queryResponse.rows[0] || {}),
+      });
+
+      // Rows have CRM normalized format: {uids: [...], values: [...]}
+      // Map values array to the selected query fields (in order):
+      // values[0]=C079.CapabilityType, values[1]=C079.Description, values[2]=C079.DisplayName,
+      // values[3]=C079.ID, values[4]=C079.ToolType, values[5]=C079.ToolImplementation,
+      // values[6]=C081.PropertyKey, values[7]=C081.PropertyType, values[8]=C081.PropertyDescription
+
+      const capabilityMap = new Map<
+        string,
+        {
+          capabilityRecord: any;
+          propertyRecords: any[];
         }
-      } catch (linkError) {
-        console.warn(`Failed to read $Link[C081] for parameter record ${i}`, linkError);
-        continue;
+      >();
+
+      for (const row of queryResponse.rows) {
+        if (!Array.isArray(row.values) || !Array.isArray(row.uids)) {
+          console.log("AgentEntity.parseCapabilities: Row has unexpected format, skipping:", {
+            hasValues: Array.isArray(row.values),
+            hasUids: Array.isArray(row.uids),
+          });
+          continue;
+        }
+
+        // Extract capability ID from values[3] (C079.ID)
+        const capabilityId = row.values[3];
+        if (!capabilityId) {
+          console.log(
+            "AgentEntity.parseCapabilities: Row has no capability ID (values[3]), skipping"
+          );
+          continue;
+        }
+
+        // Build capability record from values array with .get() accessor
+        if (!capabilityMap.has(capabilityId)) {
+          const capabilityRecord = {
+            get: (prop: string) => {
+              const propMap: { [key: string]: number } = {
+                CapabilityType: 0,
+                Description: 1,
+                DisplayName: 2,
+                ID: 3,
+                ToolType: 4,
+                ToolImplementation: 5,
+              };
+              const index = propMap[prop];
+              return index !== undefined ? row.values[index] : undefined;
+            },
+          };
+          capabilityMap.set(capabilityId, {
+            capabilityRecord,
+            propertyRecords: [],
+          });
+        }
+
+        // Extract property record from values[6-8] (C081 fields)
+        const propertyKey = row.values[6];
+        if (propertyKey) {
+          const propertyRecord = {
+            get: (prop: string) => {
+              const propMap: { [key: string]: number } = {
+                PropertyKey: 6,
+                PropertyType: 7,
+                PropertyDescription: 8,
+              };
+              const index = propMap[prop];
+              return index !== undefined ? row.values[index] : undefined;
+            },
+          };
+          capabilityMap.get(capabilityId)!.propertyRecords.push(propertyRecord);
+        }
       }
+
+      // Convert map to capability array
+      for (const [capId, { capabilityRecord, propertyRecords }] of capabilityMap.entries()) {
+        capabilities.push({
+          capabilityRecord,
+          parameterRecords: [],
+          propertyRecords,
+        });
+
+        console.log("AgentEntity.parseCapabilities: Built capability from raw rows:", {
+          id: capId,
+          displayName: capabilityRecord.get("DisplayName"),
+          propertyCount: propertyRecords.length,
+        });
+      }
+
+      console.log("AgentEntity.parseCapabilities: Parsed from raw rows:", {
+        capabilityCount: capabilities.length,
+      });
+      return capabilities;
     }
 
-    console.log("Property records count:", propertyRecords.length);
-    return {
-      capabilityRecord,
-      parameterRecords,
-      propertyRecords,
-    };
+    // Fall back to grouped entities approach (if QueryExecutor populated it)
+    // Iterate through grouped entities (keyed by C079.ID)
+    for (const [groupKey, entityData] of (queryResponse?.entities || new Map()).entries()) {
+      console.log("AgentEntity.parseCapabilities: Processing grouped entity", groupKey, {
+        entityDataKeys: Object.keys(entityData || {}),
+      });
+
+      if (!entityData?.normalizedRows || entityData.normalizedRows.length === 0) {
+        console.warn("AgentEntity.parseCapabilities: No normalized rows for group", groupKey);
+        continue;
+      }
+
+      // Extract C079 parent entity from first row (same for all rows in group)
+      const firstRow = entityData.normalizedRows[0];
+      if (!firstRow.C079) {
+        console.warn("AgentEntity.parseCapabilities: No C079 entity in row for group", groupKey);
+        continue;
+      }
+
+      // Build capabilityRecord with .get() accessor method
+      const capabilityRecord = QueryParser.buildEntityRecord(firstRow.C079, true);
+
+      // Collect all unique C081 property records from all rows in the group
+      const propertyRecords: any[] = [];
+      const seenPropertyKeys = new Set<string>();
+
+      for (const row of entityData.normalizedRows) {
+        if (row.C081 && Object.keys(row.C081).length > 0) {
+          const propertyKey = row.C081.PropertyKey;
+          if (propertyKey && !seenPropertyKeys.has(propertyKey)) {
+            const propertyRecord = QueryParser.buildEntityRecord(row.C081, true);
+            propertyRecords.push(propertyRecord);
+            seenPropertyKeys.add(propertyKey);
+            console.log(
+              "AgentEntity.parseCapabilities: Added property",
+              propertyKey,
+              "to capability",
+              groupKey
+            );
+          }
+        }
+      }
+
+      // Create capability entry matching readToolCapability output format
+      capabilities.push({
+        capabilityRecord,
+        parameterRecords: [], // Not needed since query joins directly to C081
+        propertyRecords,
+      });
+
+      console.log(
+        "AgentEntity.parseCapabilities: Built capability from grouped entity",
+        capabilityRecord.get?.("ID"),
+        "with",
+        propertyRecords.length,
+        "properties"
+      );
+    }
+
+    console.log("AgentEntity.parseCapabilities: Total capabilities parsed:", capabilities.length);
+    return capabilities;
+  }
+}
+
+export const readToolCapability = async (): Promise<Array<{ capabilityRecord: any; parameterRecords: any[]; propertyRecords: any[] }>> => {
+  try {
+    console.log("=== EXECUTING CAPABILITY QUERY USING AgentEntity ===");
+    console.log("Link context (migratedAgentUid):", JSON.stringify(migratedAgentUid));
+
+    // Use AgentEntity to load all capabilities for the migrated agent
+    const agentEntity = new AgentEntity(migratedAgentUid);
+    const allCapabilities = await agentEntity.loadCapabilities();
+
+    console.log(`\n=== FINAL RESULT ===`);
+    console.log(`Successfully loaded ${allCapabilities.length} total capabilities`);
+    console.log(
+      "Capabilities:",
+      allCapabilities.map((c) => ({
+        id: c.capabilityRecord.get?.("ID"),
+        displayName: c.capabilityRecord.get?.("DisplayName"),
+        propertyCount: c.propertyRecords.length,
+      }))
+    );
+
+    return allCapabilities;
   } catch (error) {
-    console.error("Failed to load migrated tool capability from CRM DB.", error);
-    return null;
+    console.error("Failed to load tool capabilities from CRM DB.", error);
+    return [];
   }
 };
 
@@ -395,197 +598,46 @@ const buildMigratedGetUserIdentityTool = (capabilityRecord: any, propertyRecords
   return toolDefinition;
 };
 
-const tools = [
-  {
-    type: "function",
-    function: {
-      name: "openCampaign",
-      description: "Open the campaign tree for the campaign record created by createEventCampaign. This tool is the second step in the campaign workflow and must be called with the uid returned from createEventCampaign. Do not use this for generic record navigation or user identity lookups.",
-      parameters: {
-        type: "object",
-        properties: {
-          uid: {
-            type: "object",
-            description: "Preferred full CRM UID returned by createEventCampaign. This should include both infoAreaId and recordId."
-          },
-          infoAreaId: {
-            type: "string",
-            description: "CRM info area for the campaign record. Use the returned infoAreaId from createEventCampaign when needed."
-          },
-          recordId: {
-            type: "string",
-            description: "The exact CRM record identifier returned by createEventCampaign. Use this only for the campaign workflow."
-          },
-          recordUid: {
-            type: "object",
-            description: "Legacy recordUid fallback. Only use when the caller already has a CRM UID object/string from the campaign step."
-          },
-        },
-        required: ["recordId"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "addToTargetGroup",
-      description: "Add one or more CRM records to a target group for the selected campaign. Use this when a workflow needs to attach persons/companies to an existing campaign activity target group. The targetUid is the campaign activity or target-group container and uids is the list of records to add.",
-      parameters: {
-        type: "object",
-        properties: {
-          targetUid: {
-            type: "object",
-            description: "The CRM target group or campaign activity UID that will receive the records."
-          },
-          uids: {
-            type: "array",
-            description: "Array of record UIDs to add to the target group.",
-            items: {
-              type: "object",
-            },
-          },
-          infoAreaId: {
-            type: "string",
-            description: "Optional override for the target-related info area when the caller already has it."
-          },
-          source: {
-            type: "object",
-            description: "Optional source UI element or context object passed through to the CRM target-group helper."
-          },
-          elEvent: {
-            type: "object",
-            description: "Optional event object passed through to the target-group helper."
-          },
-          additionalParameters: {
-            type: "object",
-            description: "Optional extra parameters for the target-group operation.",
-            additionalProperties: true,
-          },
-        },
-        required: ["targetUid", "uids"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "openRecordInTreeView",
-      description: "Open a general CRM record in the tree view. Use this only for non-campaign record navigation. Never use this when a user asks to create or open a campaign; in that case prefer createEventCampaign first and then openCampaign.",
-      parameters: {
-        type: "object",
-        properties: {
-          uid: {
-            type: "object",
-            description: "Preferred full CRM UID. This should include both infoAreaId and recordId."
-          },
-          infoAreaId: {
-            type: "string",
-            description: "CRM info area, usually FI for company records. Optional fallback only if the full uid is not available."
-          },
-          recordId: {
-            type: "string",
-            description: "The exact CRM record identifier, e.g. 'x00002329000002d4'. Fallback only."
-          },
-          recordUid: {
-            type: "object",
-            description: "Legacy recordUid fallback. Only use when the caller already has a CRM UID object/string."
-          },
-        },
-        required: ["recordId"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "crud",
-      description: "Execute a single CRM CRUD operation through the batch API using the exact request contract defined by the CRM typings. This tool must send exactly one operation in a single-item batch, never a multi-operation batch and never a direct read/create/update call. The JSON must contain: operation as one of create, read, update, delete; and request as a single CRM request object. Use the real request contracts from the CRM typings: read = { uid: RecordUid, fields?: [...], linkName?: string, options?: any, autoLoad?: boolean }; create = { infoAreaId: string, fields?: [...], options?: { links?: [...] } }; update = { businessObject?: object, uid?: RecordUid, fields?: [...], options?: { catalogValueEncoding?: any, links?: [...] } }; delete = { uid: RecordUid }. Always send the request as a plain object, not as a wrapped batch payload.",
-      parameters: {
-        type: "object",
-        properties: {
-          operation: {
-            type: "string",
-            enum: ["create", "read", "update", "delete"],
-            description: "Single CRUD operation to execute. Must be exactly one of create, read, update, or delete."
-          },
-          request: {
-            type: "object",
-            description: "Single CRM request object matching the operation. Example read payload: { uid: { infoAreaId: 'FI', recordId: 'x00002329000002d4' }, fields: ['name'] }. Example create payload: { infoAreaId: 'FI', fields: [{ fieldId: 123, value: 'abc' }] }. Example update payload: { uid: { infoAreaId: 'FI', recordId: 'x00002329000002d4' }, fields: [{ fieldId: 123, value: 'new value' }] }. Example delete payload: { uid: { infoAreaId: 'FI', recordId: 'x00002329000002d4' } }.",
-            additionalProperties: true,
-          },
-        },
-        required: ["operation", "request"],
-        additionalProperties: false,
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "crmQuery",
-      description: "Execute a named CRM query using the QueryCommand contract and return the raw queryResult payload. Use this when the caller references a stored query by name and wants the resulting rows/columns metadata; maxRows defaults to 10000 when omitted. The optional link is the parent CRM link context for the query.",
-      parameters: {
-        type: "object",
-        properties: {
-          name: {
-            type: "string",
-            description: "Stored CRM query name to execute. This is the required identifier for the named query."
-          },
-          maxRows: {
-            type: "number",
-            description: "Maximum number of rows to return. Defaults to 10000 when omitted or invalid."
-          },
-          link: {
-            type: "object",
-            description: "Optional parent CRM link context for the query. Accepts a full uid object."
-          },
-        },
-        required: ["name"],
-        additionalProperties: false,
-      },
-    },
-  },
-];
-
 export const buildToolsForPrompt = async (_userPrompt: string) => {
-  // Read tool capability for the migrated agent using readToolCapability
-  const capabilityData = await readToolCapability();
+  // Read all tool capabilities from CRM database for the migrated agent
+  const allCapabilities = await readToolCapability();
   console.log("buildToolsForPrompt: readToolCapability returned", {
-    hasCapabilityRecord: !!capabilityData?.capabilityRecord,
-    propertyRecordsCount: capabilityData?.propertyRecords?.length ?? 0
+    capabilityCount: allCapabilities.length
   });
   
-  const mergedTools = [...tools];
-  const seenNames = new Set(mergedTools.map((tool: any) => tool?.function?.name).filter(Boolean));
+  // Load tools only from CRM database (no static fallback)
+  const mergedTools: any[] = [];
+  const dbLoadedToolNames = new Set<string>();
 
-  // Build tool from the capability data
-  if (capabilityData) {
-    const migratedTool = buildMigratedGetUserIdentityTool(capabilityData.capabilityRecord, capabilityData.propertyRecords);
+  // Merge DB-loaded tools: DB tools take priority over static definitions
+  for (let i = 0; i < allCapabilities.length; i++) {
+    const capabilityData = allCapabilities[i];
+    const dbTool = buildMigratedGetUserIdentityTool(capabilityData.capabilityRecord, capabilityData.propertyRecords);
 
-    if (migratedTool) {
-      console.log(`buildToolsForPrompt: processing migrated capability`, {
-        toolName: migratedTool.function?.name
-      });
+    if (dbTool && dbTool.function?.name) {
+      const toolName = dbTool.function.name;
+      dbLoadedToolNames.add(toolName);
+      
+      console.log(`buildToolsForPrompt: processing DB-loaded tool "${toolName}"`);
 
-      if (!seenNames.has(migratedTool.function.name)) {
-        console.log(`buildToolsForPrompt: adding new tool from migrated capability`, { name: migratedTool.function.name });
-        mergedTools.push(migratedTool);
-        seenNames.add(migratedTool.function.name);
+      // Find and replace existing static tool with same name, or add if new
+      const existingIndex = mergedTools.findIndex((tool: any) => tool?.function?.name === toolName);
+      if (existingIndex >= 0) {
+        console.log(`buildToolsForPrompt: replacing static tool "${toolName}" with DB-loaded version`);
+        mergedTools[existingIndex] = dbTool;
       } else {
-        console.log(`buildToolsForPrompt: replacing existing tool from migrated capability`, { name: migratedTool.function.name });
-        const index = mergedTools.findIndex((tool: any) => tool?.function?.name === migratedTool.function.name);
-        if (index >= 0) {
-          mergedTools[index] = migratedTool;
-        }
+        console.log(`buildToolsForPrompt: adding new DB-loaded tool "${toolName}"`);
+        mergedTools.push(dbTool);
       }
     } else {
-      console.warn(`buildToolsForPrompt: migrated capability returned null tool`);
+      console.warn(`buildToolsForPrompt: capability at index ${i} returned null or invalid tool`);
     }
-  } else {
-    console.warn("buildToolsForPrompt: readToolCapability returned no data");
   }
 
-  console.log("buildToolsForPrompt: final tool count", { count: mergedTools.length });
+  console.log("buildToolsForPrompt: final tool count", { 
+    total: mergedTools.length,
+    fromDb: dbLoadedToolNames.size
+  });
   return mergedTools;
 };
 
@@ -914,9 +966,17 @@ export const sanitizeToolCall = (toolCall: any) => {
   }
 
   const functionName = toolCall.function.name;
+  
+  // Allowlist: includes getUserIdentity + DB-loaded tool names from CRM
+  // All other tools (openCampaign, addToTargetGroup, etc.) are now loaded from C079 records
   const allowedToolNames = new Set([
-    ...(tools as any[]).map((tool: any) => tool?.function?.name).filter(Boolean),
     "getUserIdentity",
+    // DB-loadable tool names (from C079.ID field in CRM):
+    "openCampaign",
+    "addToTargetGroup",
+    "openRecordInTreeView",
+    "crud",
+    "crmQuery"
   ]);
 
   if (!functionName || !allowedToolNames.has(functionName)) {

@@ -2,7 +2,7 @@ import {
   mapPropertyRecordToSchema,
   mapCapabilityRecordToToolSchema,
   readToolCapability,
-} from './chat';
+} from '../src/chat';
 
 // ===== MOCK DATA BASED ON ACTUAL CRM RESPONSES =====
 
