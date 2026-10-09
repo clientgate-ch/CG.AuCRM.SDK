@@ -1,0 +1,23 @@
+{
+  "preset": "ts-jest",
+  "testEnvironment": "node",
+  "roots": ["<rootDir>/tests", "<rootDir>/src"],
+  "testMatch": ["**/__tests__/**/*.ts", "**/*.test.ts"],
+  "moduleFileExtensions": ["ts", "tsx", "js", "jsx", "json"],
+  "transform": {
+    "^.+\\.tsx?$": [
+      "ts-jest",
+      {
+        "tsconfig": {
+          "module": "commonjs",
+          "esModuleInterop": true,
+          "allowSyntheticDefaultImports": true
+        }
+      }
+    ]
+  },
+  "collectCoverageFrom": [
+    "src/**/*.{ts,tsx}",
+    "!src/**/*.d.ts"
+  ]
+}
