@@ -43,30 +43,6 @@ const firstRecordFromResponse = (value: any): any => {
   return value;
 };
 
-const coerceRecordList = (value: any): any[] => {
-  if (!value) {
-    return [];
-  }
-
-  if (Array.isArray(value)) {
-    return value.filter((entry) => entry && typeof entry === "object");
-  }
-
-  if (Array.isArray(value.records)) {
-    return value.records.filter((entry) => entry && typeof entry === "object");
-  }
-
-  if (Array.isArray(value.items)) {
-    return value.items.filter((entry) => entry && typeof entry === "object");
-  }
-
-  if (typeof value === "object") {
-    return [value];
-  }
-
-  return [];
-};
-
 // Convert CRM property type codes to JSON Schema types
 // Key-based type inference: certain property keys always have specific JSON Schema types
 const inferTypeByKey = (propertyKey: string): string | null => {
