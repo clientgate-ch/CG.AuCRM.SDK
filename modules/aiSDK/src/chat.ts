@@ -101,6 +101,7 @@ export class PropertySchema {
     public key: string,
     crmType: string,
     public description: string,
+    public isRequired: boolean = false,
   ) {
     // Convert CRM type code to JSON Schema type, using key-based inference
     this.jsonSchemaType = convertCrmTypeToJsonSchema(this.key, crmType);
@@ -127,6 +128,11 @@ export class ToolSchema {
       schemaProperties[property.key] = property.toJsonSchema();
     }
 
+    // Only include properties where isRequired === true in the required array
+    const requiredProperties = this.properties
+      .filter(property => property.isRequired)
+      .map(property => property.key);
+
     return {
       type: "function",
       function: {
@@ -135,7 +141,7 @@ export class ToolSchema {
         parameters: {
           type: "object",
           properties: schemaProperties,
-          required: Object.keys(schemaProperties),
+          required: requiredProperties,
         },
       },
     };
@@ -145,6 +151,7 @@ export class ToolSchema {
 export const mapPropertyRecordToSchema = (propertyRecord: any): PropertySchema | null => {
   // Extract businessObject directly from the response without fallback chain.
   // C081 (Parameter Property) schema: PropertyKey, PropertyType, PropertyDescription (all required).
+  // PropertyRequired (F7009) is optional and defaults to false.
   const propertyBusinessObject = firstRecordFromResponse(propertyRecord) as u8.Crm.BusinessObject;
   if (!propertyBusinessObject) {
     console.log("mapPropertyRecordToSchema: propertyBusinessObject is null");
@@ -163,11 +170,17 @@ export const mapPropertyRecordToSchema = (propertyRecord: any): PropertySchema |
   const propertyDescription = typeof propertyBusinessObject.get === 'function'
     ? propertyBusinessObject.get<string>("PropertyDescription")
     : (propertyBusinessObject as any)["PropertyDescription"] || (propertyBusinessObject as any)["7008"];
+  
+  // Extract PropertyRequired (F7009) from C081 record. Defaults to false if not present.
+  const propertyRequired = typeof propertyBusinessObject.get === 'function'
+    ? propertyBusinessObject.get<boolean>("PropertyRequired") || false
+    : (propertyBusinessObject as any)["PropertyRequired"] || (propertyBusinessObject as any)["7009"] || false;
 
   console.log("mapPropertyRecordToSchema extracted fields:", {
     propertyKey,
     propertyType,
-    propertyDescription
+    propertyDescription,
+    propertyRequired
   });
 
   if (!propertyKey || !propertyType || !propertyDescription) {
@@ -179,7 +192,7 @@ export const mapPropertyRecordToSchema = (propertyRecord: any): PropertySchema |
     return null;
   }
 
-  return new PropertySchema(String(propertyKey).trim(), String(propertyType).trim(), String(propertyDescription).trim());
+  return new PropertySchema(String(propertyKey).trim(), String(propertyType).trim(), String(propertyDescription).trim(), !!propertyRequired);
 };
 
 export const mapCapabilityRecordToToolSchema = (capabilityRecord: any, propertyRecords: any[] = []): ToolSchema | null => {
@@ -569,7 +582,9 @@ const buildMigratedGetUserIdentityTool = (capabilityRecord: any, propertyRecords
   }
   const toolDefinition = toolSchema.toToolDefinition();
   console.log("buildMigratedGetUserIdentityTool: successfully created tool definition", { 
-    name: toolDefinition.function.name 
+    name: toolDefinition.function.name,
+    requiredArray: toolDefinition.function.parameters.required,
+    allProperties: Object.keys(toolDefinition.function.parameters.properties)
   });
   return toolDefinition;
 };
